@@ -4,8 +4,11 @@ class Annotation {
   double? geometery;
   List<String>? userInfo;
 
-  Annotation(
-      {required this.id, required this.geometery, required this.userInfo});
+  Annotation({
+    required this.id,
+    required this.geometery,
+    required this.userInfo,
+  });
 
   @override
   String toString() {

@@ -1,4 +1,4 @@
-import 'routeLeg.dart';
+import 'route_leg.dart';
 import '../helpers.dart';
 
 ///This class contains all progress information at any given time during a navigation session.
@@ -19,20 +19,21 @@ class RouteProgressEvent {
   int? stepIndex;
   bool? isProgressEvent;
 
-  RouteProgressEvent(
-      {this.arrived,
-      this.distance,
-      this.duration,
-      this.distanceTraveled,
-      this.currentLegDistanceTraveled,
-      this.currentLegDistanceRemaining,
-      this.currentStepInstruction,
-      this.currentLeg,
-      this.priorLeg,
-      this.remainingLegs,
-      this.legIndex,
-      this.stepIndex,
-      this.isProgressEvent});
+  RouteProgressEvent({
+    required this.arrived,
+    required this.distance,
+    required this.duration,
+    required this.distanceTraveled,
+    required this.currentLegDistanceTraveled,
+    required this.currentLegDistanceRemaining,
+    required this.currentStepInstruction,
+    required this.currentLeg,
+    required this.priorLeg,
+    required this.remainingLegs,
+    required this.legIndex,
+    required this.stepIndex,
+    required this.isProgressEvent,
+  });
 
   RouteProgressEvent.fromJson(Map<String, dynamic> json) {
     isProgressEvent = json['arrived'] != null;

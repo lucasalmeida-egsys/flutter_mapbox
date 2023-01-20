@@ -1,27 +1,30 @@
 import 'dart:convert';
-import 'events.dart';
-import 'routeProgressEvent.dart';
+import '../enums/events.dart';
+import 'route_progress_event.dart';
 
 /// Represents an event sent by the navigation service
 class RouteEvent {
   MapBoxEvent? eventType;
   dynamic data;
 
-  RouteEvent({this.eventType, this.data});
+  RouteEvent({required this.eventType, required this.data});
 
   RouteEvent.fromJson(Map<String, dynamic> json) {
-    if (json['eventType'] is int)
+    if (json['eventType'] is int) {
       eventType = MapBoxEvent.values[json['eventType']];
-    else {
+    } else {
       try {
         eventType = MapBoxEvent.values.firstWhere(
-            (e) => e.toString().split(".").last == json['eventType']);
+          (e) => e.id == json['eventType'],
+        );
       } on StateError {
         //When the list is empty or eventType not found (Bad State: No Element)
-      } catch (e) {}
+      } catch (_) {
+        //
+      }
     }
     var dataJson = json['data'];
-    if (eventType == MapBoxEvent.progress_change) {
+    if (eventType == MapBoxEvent.progressChange) {
       data = RouteProgressEvent.fromJson(dataJson);
     } else {
       data = jsonEncode(json['data']);

@@ -9,8 +9,12 @@ class RouteStep {
   double? distance;
   double? expectedTravelTime;
 
-  RouteStep(
-      this.name, this.instructions, this.distance, this.expectedTravelTime);
+  RouteStep({
+    required this.name,
+    required this.instructions,
+    required this.distance,
+    required this.expectedTravelTime,
+  });
 
   RouteStep.fromJson(Map<String, dynamic> json) {
     name = json["name"];

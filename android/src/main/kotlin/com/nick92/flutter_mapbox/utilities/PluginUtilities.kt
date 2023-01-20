@@ -5,11 +5,10 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import androidx.annotation.NonNull
-import com.nick92.flutter_mapbox.FlutterMapboxPlugin
 import com.nick92.flutter_mapbox.models.MapBoxEvents
 import com.nick92.flutter_mapbox.models.MapBoxRouteProgressEvent
 import com.google.gson.Gson
-import com.mapbox.mapboxsdk.geometry.LatLng
+import com.nick92.flutter_mapbox.EmbeddedNavigationView
 import io.flutter.plugin.common.MethodCall
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -26,23 +25,13 @@ class PluginUtilities {
             return context.getString(stringRes)
         }
 
-        fun getRandomLatLng(bbox: DoubleArray): LatLng {
-            val random = Random()
-
-            val randomLat: Double = bbox.get(1) + (bbox.get(3) - bbox.get(1)) * random.nextDouble()
-            val randomLon: Double = bbox.get(0) + (bbox.get(2) - bbox.get(0)) * random.nextDouble()
-
-            val latLng = LatLng(randomLat, randomLon)
-            return latLng
-        }
-
         fun sendEvent(event: MapBoxRouteProgressEvent) {
             val dataString = Gson().toJson(event)
             val jsonString = "{" +
                     "  \"eventType\": \"${MapBoxEvents.PROGRESS_CHANGE.value}\"," +
                     "  \"data\": $dataString" +
                     "}"
-            FlutterMapboxPlugin.eventSink?.success(jsonString)
+            EmbeddedNavigationView.eventSink?.success(jsonString)
         }
 
         fun sendEvent(event: MapBoxEvents, data: String = "") {
@@ -53,68 +42,7 @@ class PluginUtilities {
                     "  \"eventType\": \"${event.value}\"," +
                     "  \"data\": \"$data\"" +
                     "}";
-            FlutterMapboxPlugin.eventSink?.success(jsonString)
-        }
-
-        fun getListOfStringById(key: String, call: MethodCall): ArrayList<String> {
-            val logTypesList = arrayListOf<String>()
-            call.argument<String>(key)?.let {
-                it.split(",").forEach {
-                    logTypesList.add(it)
-                }
-                return logTypesList
-            }
-            return arrayListOf()
-        }
-
-        fun getStringValueById(key: String, call: MethodCall): String {
-            call.argument<String>(key)?.let {
-                return it
-            }
-            return ""
-        }
-
-        fun getIntValueById(key: String, call: MethodCall): Int? {
-            call.argument<Int>(key)?.let {
-                return it
-            }
-            return null
-        }
-
-        fun getDoubleValueById(key: String, call: MethodCall): Double? {
-            call.argument<Double>(key)?.let {
-                return it
-            }
-            return null
-        }
-
-        fun getBoolValueById(key: String, call: MethodCall): Boolean {
-            call.argument<Boolean>(key)?.let {
-                return it
-            }
-            return false
-        }
-
-        fun getInputStreamValueById(key: String, call: MethodCall): InputStream? {
-            call.argument<ByteArray>(key)?.let {
-                return ByteArrayInputStream(it)
-            }
-            return null
-        }
-
-
-        fun getLocaleFromCode(locale: String): Locale {
-            val locales: Array<Locale> = Locale.getAvailableLocales()
-
-            val filtered = locales.filter {
-                it.country.equals(locale, ignoreCase = true)
-            }
-
-            return if (filtered.isNotEmpty()) {
-                filtered.first()
-            } else {
-                Locale.ENGLISH
-            }
+            EmbeddedNavigationView.eventSink?.success(jsonString)
         }
 
         fun isNetworkAvailable(context: Context): Boolean {
@@ -125,9 +53,7 @@ class PluginUtilities {
                 return when {
                     actNw.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> true
                     actNw.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> true
-                    //for other device how are able to connect with Ethernet
                     actNw.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> true
-                    //for check internet over Bluetooth
                     actNw.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> true
                     else -> false
                 }

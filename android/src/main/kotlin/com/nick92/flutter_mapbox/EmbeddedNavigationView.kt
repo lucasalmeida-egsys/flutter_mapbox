@@ -5,27 +5,26 @@ import android.app.Application
 import android.content.Context
 import android.content.res.Configuration
 import android.content.res.Resources
-import android.graphics.BitmapFactory
-import android.graphics.drawable.Drawable
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import androidx.annotation.NonNull
 import androidx.core.content.ContextCompat
 import com.mapbox.api.directions.v5.DirectionsCriteria
+import com.mapbox.api.directions.v5.models.Bearing
+import com.mapbox.api.directions.v5.models.DirectionsRoute
 import com.mapbox.api.directions.v5.models.RouteOptions
 import com.mapbox.bindgen.Expected
 import com.mapbox.geojson.Point
 import com.mapbox.mapboxsdk.geometry.LatLng
-import com.mapbox.mapboxsdk.style.expressions.Expression.*
 import com.mapbox.maps.*
 import com.mapbox.maps.plugin.LocationPuck2D
 import com.mapbox.maps.plugin.animation.MapAnimationOptions
 import com.mapbox.maps.plugin.animation.camera
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.*
-import com.mapbox.maps.plugin.delegates.listeners.OnCameraChangeListener
 import com.mapbox.maps.plugin.gestures.OnMapClickListener
 import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.locationcomponent.location
@@ -39,9 +38,6 @@ import com.mapbox.navigation.core.MapboxNavigation
 import com.mapbox.navigation.core.MapboxNavigationProvider
 import com.mapbox.navigation.core.directions.session.RoutesObserver
 import com.mapbox.navigation.core.formatter.MapboxDistanceFormatter
-import com.mapbox.navigation.core.replay.MapboxReplayer
-import com.mapbox.navigation.core.replay.ReplayLocationEngine
-import com.mapbox.navigation.core.replay.route.ReplayProgressObserver
 import com.mapbox.navigation.core.routealternatives.NavigationRouteAlternativesObserver
 import com.mapbox.navigation.core.routealternatives.RouteAlternativesError
 import com.mapbox.navigation.core.trip.session.LocationMatcherResult
@@ -76,16 +72,22 @@ import com.mapbox.navigation.ui.voice.model.SpeechValue
 import com.mapbox.navigation.ui.voice.model.SpeechVolume
 import com.nick92.flutter_mapbox.databinding.MapActivityBinding
 import com.nick92.flutter_mapbox.models.MapBoxEvents
+import com.nick92.flutter_mapbox.models.MapBoxLocation
 import com.nick92.flutter_mapbox.models.MapBoxRouteProgressEvent
+import com.nick92.flutter_mapbox.models.MapBoxSettings
 import com.nick92.flutter_mapbox.utilities.PluginUtilities
-import com.nick92.flutter_mapbox.views.FullscreenNavigationLauncher
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.*
 
 
-open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivityBinding, accessToken: String):  MethodChannel.MethodCallHandler, EventChannel.StreamHandler,
+open class EmbeddedNavigationView(
+    ctx: Context,
+    act: Activity,
+    bind: MapActivityBinding,
+    accessToken: String
+) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler,
     Application.ActivityLifecycleCallbacks {
 
     open fun initFlutterChannelHandlers() {
@@ -93,19 +95,19 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         eventChannel?.setStreamHandler(this)
     }
 
-    open fun initNavigation(mv: MapView, arguments: Map<*, *>) {
+    open fun initNavigation(mv: MapView, arguments: Map<String, *>) {
         mapView = mv
         mapboxMap = mapView.getMapboxMap()
 
-        if(arguments != null)
-            setOptions(arguments)
+        if (arguments != null)
+            settings = MapBoxSettings.from(arguments)
 
         // initialize the location puck
         mapView.location.apply {
             this.locationPuck = LocationPuck2D(
                 bearingImage = ContextCompat.getDrawable(
                     context,
-                    R.drawable.mapbox_user_icon
+                    R.drawable.mapbox_navigation_puck_icon
                 ),
             )
             setLocationProvider(navigationLocationProvider)
@@ -115,13 +117,6 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         // initialize Mapbox Navigation
         mapboxNavigation = if (MapboxNavigationProvider.isCreated()) {
             MapboxNavigationProvider.retrieve()
-        } else if (simulateRoute) {
-            MapboxNavigationProvider.create(
-                NavigationOptions.Builder(context)
-                    .accessToken(token)
-                    // .locationEngine(replayLocationEngine)
-                    .build()
-            )
         } else {
             MapboxNavigationProvider.create(
                 NavigationOptions.Builder(context)
@@ -135,13 +130,15 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         navigationCamera = NavigationCamera(
             mapboxMap,
             mapView.camera,
-            viewportDataSource
+            viewportDataSource,
         )
+
         // set the animations lifecycle listener to ensure the NavigationCamera stops
         // automatically following the user location when the map is interacted with
         mapView.camera.addCameraAnimationsLifecycleListener(
             NavigationBasicGesturesHandler(navigationCamera)
         )
+
         navigationCamera.registerNavigationCameraStateChangeObserver { navigationCameraState ->
             // shows/hide the recenter button depending on the camera state
             when (navigationCameraState) {
@@ -194,12 +191,12 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         speechApi = MapboxSpeechApi(
             activity,
             token,
-            navigationLanguage
+            settings.navigationLanguage
         )
         voiceInstructionsPlayer = MapboxVoiceInstructionsPlayer(
             activity,
             token,
-            navigationLanguage
+            settings.navigationLanguage
         )
 
         // initialize route line, the withRouteLineBelowLayerId is specified to place
@@ -210,6 +207,7 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
             .withRouteLineBelowLayerId("road-label-navigation")
             .withVanishingRouteLineEnabled(true)
             .build()
+
         routeLineApi = MapboxRouteLineApi(mapboxRouteLineOptions)
         routeLineView = MapboxRouteLineView(mapboxRouteLineOptions)
 
@@ -217,26 +215,16 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         val routeArrowOptions = RouteArrowOptions.Builder(activity).build()
         routeArrowView = MapboxRouteArrowView(routeArrowOptions)
 
-        var styleUrl = mapStyleUrlDay
+        var styleUrl = settings.mapStyleUrl
         if (styleUrl == null) styleUrl = Style.MAPBOX_STREETS
         // load map style if set if not default
         mapboxMap.loadStyleUri(
             styleUrl
         ) {
-            if(longPressDestinationEnabled)
-            {
+            if (settings.longPressDestinationEnabled) {
                 // add long click listener that search for a route to the clicked destination
                 binding.mapView.gestures.addOnMapLongClickListener { point ->
-                    wayPoints.clear()
-
-                    val originLocation = navigationLocationProvider.lastLocation
-                    val originPoint = originLocation?.let {
-                        Point.fromLngLat(it.longitude, it.latitude)
-                    }
-                    wayPoints.add(originPoint!!)
-                    wayPoints.add(point)
-
-                    getRoute(context)
+                    // TODO: implementar multiroute
                     true
                 }
             }
@@ -246,16 +234,16 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         binding.stop.setOnClickListener {
             clearRouteAndStopNavigation()
         }
+
         binding.recenter.setOnClickListener {
             navigationCamera.requestNavigationCameraToFollowing()
-            binding.routeOverview.showTextAndExtend(BUTTON_ANIMATION_DURATION)
+            binding.routeOverview.showTextAndExtend(Companion.ANIMATION_DURATION)
         }
         binding.routeOverview.setOnClickListener {
             navigationCamera.requestNavigationCameraToOverview()
-            binding.recenter.showTextAndExtend(BUTTON_ANIMATION_DURATION)
+            binding.recenter.showTextAndExtend(Companion.ANIMATION_DURATION)
         }
         binding.soundButton.setOnClickListener {
-            // mute/unmute voice instructions
             isVoiceInstructionsMuted = !isVoiceInstructionsMuted
         }
 
@@ -263,9 +251,14 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         binding.soundButton.mute()
 
         mapView.gestures.addOnMapClickListener(mapClickListener)
+
+        val annotationApi = mapView?.annotations
+        pointAnnotationManager = annotationApi.createPointAnnotationManager()
+        pointAnnotationManager.addClickListener(onPointAnnotationClickListener)
+
         // initialize navigation trip observers
         registerObservers()
-        mapboxNavigation.startTripSession(withForegroundService = false)
+        mapboxNavigation.startTripSession(withForegroundService = true)
     }
 
     override fun onMethodCall(methodCall: MethodCall, result: MethodChannel.Result) {
@@ -274,7 +267,13 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
                 result.success("Android ${Build.VERSION.RELEASE}")
             }
             "enableOfflineRouting" -> {
-                //downloadRegionForOfflineRouting(call, result)
+                downloadRegionForOfflineRouting(methodCall, result)
+            }
+            "addMarker" -> {
+                addMarker(methodCall, result)
+            }
+            "removeMarker" -> {
+                addMarker(methodCall, result)
             }
             "buildRoute" -> {
                 buildRoute(methodCall, result)
@@ -288,14 +287,14 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
             "startNavigation" -> {
                 startNavigation(methodCall, result)
             }
-            "startFullScreenNavigation" -> {
-                FullscreenNavigationLauncher.startNavigation(this.activity, wayPoints)
-            }
             "finishNavigation" -> {
                 finishNavigation(methodCall, result)
             }
             "getDistanceRemaining" -> {
                 result.success(distanceRemaining)
+            }
+            "getCurrentNavigationMode" -> {
+                result.success(settings.navigationMode)
             }
             "getDurationRemaining" -> {
                 result.success(durationRemaining)
@@ -306,7 +305,7 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
             "reCenter" -> {
                 navigationCamera.requestNavigationCameraToOverview(
                     stateTransitionOptions = NavigationCameraTransitionOptions.Builder()
-                        .maxDuration(0) // instant transition
+                        .maxDuration(1000) // instant transition
                         .build()
                 )
             }
@@ -314,49 +313,32 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         }
     }
 
+    private fun downloadRegionForOfflineRouting(
+        @NonNull call: MethodCall,
+        @NonNull result: MethodChannel.Result
+    ) {
+        result.error("TODO", "Not Implemented in Android", "will implement soon")
+    }
+
     private fun buildRoute(methodCall: MethodCall, result: MethodChannel.Result) {
         isNavigationCanceled = false
         isNavigationInProgress = false
 
-        val arguments = methodCall.arguments as? Map<*, *>
-        if(arguments != null)
-            setOptions(arguments)
-        val mapReady = true
-        if (mapReady) {
-            wayPoints.clear()
-            val points = arguments?.get("wayPoints") as HashMap<*, *>
+        val arguments = methodCall.arguments as Map<String, *>;
+        val destination = MapBoxLocation.from(arguments);
 
-            for (item in points)
-            {
-                val point = item.value as HashMap<*, *>
-                val latitude = point["Latitude"] as Double
-                val longitude = point["Longitude"] as Double
-                wayPoints.add(Point.fromLngLat(longitude, latitude))
-            }
-
-            val height = arguments["maxHeight"] as? String
-            val weight = arguments["maxWeight"] as? String
-            val width = arguments["maxWidth"] as? String
-
-            if(height != null)
-                maxHeight = height.toDouble()
-            if(weight != null)
-                maxWeight = weight.toDouble()
-            if(width != null)
-                maxWidth = width.toDouble()
-
-            getRoute(context)
-            result.success(true)
-        } else {
-            result.success(false)
-        }
+        generateRoute(context, destination)
+        result.success(true)
     }
 
-    private fun getRoute(context: Context) {
-        if (!PluginUtilities.isNetworkAvailable(context)) {
-            PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILD_FAILED, "No Internet Connection")
-            return
-        }
+    private fun generateRoute(context: Context, destination :MapBoxLocation) {
+        if (!PluginUtilities.isNetworkAvailable(context))
+            return PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILD_FAILED, "No Internet Connection")
+
+        val originLocation = navigationLocationProvider.lastLocation
+        val originPoint = originLocation?.let {
+            Point.fromLngLat(it.longitude, it.latitude)
+        } ?: return
 
         PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILDING)
         mapboxNavigation.stopTripSession()
@@ -365,95 +347,104 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
             RouteOptions.builder()
                 .applyDefaultNavigationOptions()
                 .applyLanguageAndVoiceUnitOptions(context)
-                .coordinatesList(wayPoints)
-                .waypointIndicesList(listOf(0, wayPoints.lastIndex))
-                .excludeList(excludeList)
-                .language(navigationLanguage)
-                .alternatives(alternatives)
-                .profile(navigationMode)
-                .maxHeight(maxHeight)
-                .maxWidth(maxWidth)
-                .maxWeight(maxWeight)
-                .continueStraight(!allowsUTurnAtWayPoints)
-                .voiceUnits(navigationVoiceUnits)
+                .coordinatesList(listOf(originPoint, Point.fromLngLat(destination.longitude, destination.latitude)))
+                .bearingsList(
+                    listOf(
+                        Bearing.builder()
+                            .angle(originLocation.bearing.toDouble())
+                            .degrees(45.0)
+                            .build(),
+                        null
+                    )
+                )
+                .layersList(listOf(mapboxNavigation.getZLevel(), null))
+                .excludeList(settings.excludeList)
+                .language(settings.navigationLanguage)
+                .alternatives(settings.alternatives)
+                .profile(settings.navigationMode)
+                .maxHeight(settings.maxHeight)
+                .maxWidth(settings.maxWidth)
+                .maxWeight(settings.maxWeight)
+                .continueStraight(!settings.allowsUTurnAtWayPoints)
+                .voiceUnits(settings.navigationVoiceUnits)
                 .annotations(DirectionsCriteria.ANNOTATION_DISTANCE)
                 .enableRefresh(true)
-                .build()
-            , object : NavigationRouterCallback {
-                override fun onRoutesReady(routes: List<NavigationRoute>,
-                                           routerOrigin: RouterOrigin) {
-                    if (routes.isEmpty()){
+                .build(), object : NavigationRouterCallback {
+                override fun onRoutesReady(
+                    routes: List<NavigationRoute>,
+                    routerOrigin: RouterOrigin
+                ) {
+                    if (routes.isEmpty())
                         PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILD_NO_ROUTES_FOUND)
-                        return
-                    }
-
-                    FlutterMapboxPlugin.currentRoute = routes[0]
-                    durationRemaining = FlutterMapboxPlugin.currentRoute!!.directionsRoute.duration()
-                    distanceRemaining = FlutterMapboxPlugin.currentRoute!!.directionsRoute.distance()
-
-                    PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILT)
-                    // Draw the route on the map
-                    mapboxNavigation.setNavigationRoutes(routes)
-                    // move the camera to overview when new route is available
-                    navigationCamera.requestNavigationCameraToOverview()
-                    isBuildingRoute = false
-                    //Start Navigation again from new Point, if it was already in Progress
-                    if (isNavigationInProgress) {
-                        startNavigation()
-                    }
+                    else
+                        setRoute(routes)
                 }
-                override fun onFailure(reasons: List<RouterFailure>,
-                                       routeOptions: RouteOptions
+
+                override fun onFailure(
+                    reasons: List<RouterFailure>,
+                    routeOptions: RouteOptions
                 ) {
                     var message = "an error occurred while building the route. Errors: "
-                    for (reason in reasons){
+                    for (reason in reasons) {
                         message += reason.message
                     }
                     PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILD_FAILED, message)
                     isBuildingRoute = false
                 }
+
                 override fun onCanceled(routeOptions: RouteOptions, routerOrigin: RouterOrigin) {
                     PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILD_CANCELLED)
                 }
             })
     }
 
-    private fun addPOIAnnotations(pois: HashMap<*, *>) {
-        val annotationApi = mapView?.annotations
-        pointAnnotationManager = annotationApi.createPointAnnotationManager()
-
-        val parkingImage = ContextCompat.getDrawable(
+    private fun addMarker(methodCall: MethodCall, result: MethodChannel.Result) {
+        val iconImage = ContextCompat.getDrawable(
             context,
-            R.drawable.square_parking_solid__1_
+            R.drawable.mapbox_marker_icon_default,
         )?.getBitmap()
 
-        for (item in pois) {
-            val poi = item.value as HashMap<*, *>
-            var name = poi["Name"] as String
-            val latitude = poi["Latitude"] as Double
-            val longitude = poi["Longitude"] as Double
+        val point = methodCall.arguments as Map<String, *>
 
-            val pointAnnotationOptions = PointAnnotationOptions()
-                .withPoint(Point.fromLngLat(longitude, latitude))
-                .withIconImage(parkingImage!!)
+        var name = point["name"] as String
+        val latitude = point["latitude"] as Double
+        val longitude = point["longitude"] as Double
 
-            pointAnnotationOptions.iconSize = 0.4
-            pointAnnotationOptions.textOffset = listOf(0.0, 2.5)
-            pointAnnotationOptions.textField = name
-            pointAnnotationOptions.textSize = 12.0
+        val pointAnnotationOptions = PointAnnotationOptions()
+            .withPoint(Point.fromLngLat(longitude, latitude))
+            .withIconImage(iconImage!!)
 
-            listOfPoints.add(pointAnnotationOptions)
-        }
+        pointAnnotationOptions.iconSize = 0.4
+        pointAnnotationOptions.textOffset = listOf(0.0, 2.5)
+        pointAnnotationOptions.textField = name
+        pointAnnotationOptions.textSize = 12.0
 
-//        mapboxMap.addOnCameraChangeListener(onCameraChangeListener)
+        pointAnnotationManager.create(pointAnnotationOptions)
 
-        pointAnnotationManager.addClickListener(onPointAnnotationClickListener)
-        // Add the resulting pointAnnotation to the map.
-        pointAnnotationManager.create(listOfPoints)
+        result.success(true)
+    }
+
+    private fun removeMarker(methodCall: MethodCall, result: MethodChannel.Result) {
+        result.success(true)
+    }
+
+    private fun setRoute(routes: List<NavigationRoute>) {
+        currentRoute = routes.first();
+
+        durationRemaining = currentRoute!!.directionsRoute.duration()
+        distanceRemaining = currentRoute!!.directionsRoute.distance()
+
+        PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILT)
+
+        // Draw the route on the map
+        mapboxNavigation.setNavigationRoutes(routes)
+        navigationCamera.requestNavigationCameraToOverview()
+
+        isBuildingRoute = false
     }
 
     private fun moveCameraToOriginOfRoute() {
-        FlutterMapboxPlugin.currentRoute?.let {
+        currentRoute?.let {
             val originCoordinate = it.routeOptions?.coordinatesList()?.get(0)
             originCoordinate?.let {
                 val location = LatLng(originCoordinate.latitude(), originCoordinate.longitude())
@@ -464,41 +455,23 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
 
     private fun clearRoute(methodCall: MethodCall, result: MethodChannel.Result) {
         mapboxNavigation.setNavigationRoutes(listOf())
-        // stop simulation
-        mapboxReplayer.stop()
-
-        // hide UI elements
-        binding.soundButton.visibility = View.INVISIBLE
-        binding.maneuverView.visibility = View.INVISIBLE
-        binding.routeOverview.visibility = View.INVISIBLE
-        binding.tripProgressView.visibility = View.INVISIBLE
-
         PluginUtilities.sendEvent(MapBoxEvents.NAVIGATION_CANCELLED)
     }
 
     private fun clearRouteAndStopNavigation() {
         mapboxNavigation.setNavigationRoutes(listOf())
-        // stop simulation
-        mapboxReplayer.stop()
-
-        // hide UI elements
-        binding.soundButton.visibility = View.INVISIBLE
-        binding.maneuverView.visibility = View.INVISIBLE
-        binding.routeOverview.visibility = View.INVISIBLE
-        binding.tripProgressView.visibility = View.INVISIBLE
-
+        mapboxNavigation.stopTripSession()
         PluginUtilities.sendEvent(MapBoxEvents.NAVIGATION_CANCELLED)
-
     }
 
     private fun startNavigation(methodCall: MethodCall, result: MethodChannel.Result) {
-        val arguments = methodCall.arguments as? Map<*, *>
-        if(arguments != null)
-            setOptions(arguments)
+        val arguments = methodCall.arguments as? Map<String, *>
 
-        startNavigation()
+        if (arguments != null)
+            settings = MapBoxSettings.from(arguments)
 
-        if (FlutterMapboxPlugin.currentRoute != null) {
+        if (currentRoute != null) {
+            startNavigation()
             result.success(true)
         } else {
             result.success(false)
@@ -506,9 +479,8 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
     }
 
     private fun finishNavigation(methodCall: MethodCall, result: MethodChannel.Result) {
-        finishNavigation()
-
-        if (FlutterMapboxPlugin.currentRoute != null) {
+        if (currentRoute != null) {
+            finishNavigation()
             result.success(true)
         } else {
             result.success(false)
@@ -517,31 +489,18 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
 
     private fun startNavigation() {
         isNavigationCanceled = false
+        mapboxNavigation.startTripSession()
 
-        if (FlutterMapboxPlugin.currentRoute != null) {
-            if (simulateRoute) {
-                mapboxReplayer.play()
-            }
-            mapboxNavigation.startTripSession()
-            // show UI elements
-             binding.soundButton.visibility = View.VISIBLE
-             binding.routeOverview.visibility = View.VISIBLE
-             binding.tripProgressView.visibility = View.VISIBLE
+        // move the camera to overview when new route is available
+        navigationCamera.requestNavigationCameraToOverview()
+        isNavigationInProgress = true
 
-            // move the camera to overview when new route is available
-            navigationCamera.requestNavigationCameraToOverview()
-            isNavigationInProgress = true
-            PluginUtilities.sendEvent(MapBoxEvents.NAVIGATION_RUNNING)
-        }
+        PluginUtilities.sendEvent(MapBoxEvents.NAVIGATION_RUNNING)
     }
 
     private fun finishNavigation(isOffRouted: Boolean = false) {
         // clear
         mapboxNavigation.setNavigationRoutes(listOf())
-
-        zoom = zoom
-        bearing = 0.0
-        tilt = 0.0
         isNavigationCanceled = true
 
         if (!isOffRouted) {
@@ -549,23 +508,15 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
             moveCameraToOriginOfRoute()
         }
 
-        if(simulateRoute)
-            mapboxReplayer.stop()
-
         mapboxNavigation.stopTripSession()
 
-        // hide UI elements
-        binding.soundButton.visibility = View.INVISIBLE
-        binding.maneuverView.visibility = View.INVISIBLE
-        binding.routeOverview.visibility = View.INVISIBLE
-        binding.tripProgressView.visibility = View.INVISIBLE
-
+        PluginUtilities.sendEvent(MapBoxEvents.NAVIGATION_FINISHED);
     }
 
     private fun updateCamera(methodCall: MethodCall, result: MethodChannel.Result) {
         var arguments = methodCall.arguments as? Map<*, *>
 
-        if(arguments != null) {
+        if (arguments != null) {
             var latitude = arguments["latitude"] as Double;
             var longitude = arguments["longitude"] as Double;
 
@@ -574,113 +525,16 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
     }
 
     private fun updateCamera(location: LatLng) {
-        val mapAnimationOptions = MapAnimationOptions.Builder().duration(1500L).build()
+        val mapAnimationOptions = MapAnimationOptions.Builder().duration(Companion.ANIMATION_DURATION).build()
         mapView.camera.easeTo(
             CameraOptions.Builder()
-                // Centers the camera to the lng/lat specified.
                 .center(Point.fromLngLat(location.longitude, location.latitude))
-                // specifies the zoom value. Increase or decrease to zoom in or zoom out
-                .zoom(zoom)
-                // specify frame of reference from the center.
+                .zoom(settings.zoom)
+                .bearing(settings.bearing * Companion.BEARING_AMPLIFIER)
+                .pitch(settings.tilt * Companion.PITCH_AMPLIFIER)
                 .build(),
             mapAnimationOptions
         )
-    }
-
-    private fun setOptions(arguments: Map<*, *>)
-    {
-        val navMode = arguments["mode"] as? String
-        if(navMode != null)
-        {
-            if(navMode == "walking")
-                navigationMode = DirectionsCriteria.PROFILE_WALKING;
-            else if(navMode == "cycling")
-                navigationMode = DirectionsCriteria.PROFILE_CYCLING;
-            else if(navMode == "driving")
-                navigationMode = DirectionsCriteria.PROFILE_DRIVING;
-        }
-
-        val simulated = arguments["simulateRoute"] as? Boolean
-        if (simulated != null) {
-            simulateRoute = simulated
-        }
-
-        val language = arguments["language"] as? String
-        if(language != null)
-            navigationLanguage = language
-
-        val units = arguments["units"] as? String
-
-        if(units != null)
-        {
-            if(units == "imperial")
-                navigationVoiceUnits = DirectionsCriteria.IMPERIAL
-            else if(units == "metric")
-                navigationVoiceUnits = DirectionsCriteria.METRIC
-        }
-
-        mapStyleUrlDay = arguments?.get("mapStyleUrlDay") as? String
-        mapStyleUrlNight = arguments?.get("mapStyleUrlNight") as? String
-
-        initialLatitude = arguments["initialLatitude"] as? Double
-        initialLongitude = arguments["initialLongitude"] as? Double
-
-        val height = arguments["maxHeight"] as? String
-        val weight = arguments["maxWeight"] as? String
-        val width = arguments["maxWidth"] as? String
-
-        if(height != null)
-            maxHeight = height.toDouble()
-        if(weight != null)
-            maxWeight = weight.toDouble()
-        if(width != null)
-            maxWidth = width.toDouble()
-
-        val zm = arguments["zoom"] as? Double
-        if(zm != null)
-            zoom = zm
-
-        val br = arguments["bearing"] as? Double
-        if(br != null)
-            bearing = br
-
-        val tt = arguments["tilt"] as? Double
-        if(tt != null)
-            tilt = tt
-
-        val optim = arguments["isOptimized"] as? Boolean
-        if(optim != null)
-            isOptimized = optim
-
-        val anim = arguments["animateBuildRoute"] as? Boolean
-        if(anim != null)
-            animateBuildRoute = anim
-
-        val altRoute = arguments["alternatives"] as? Boolean
-        if(altRoute != null)
-            alternatives = altRoute
-
-        val voiceEnabled = arguments["voiceInstructionsEnabled"] as? Boolean
-        if(voiceEnabled != null)
-            voiceInstructionsEnabled = voiceEnabled
-
-        val bannerEnabled = arguments["bannerInstructionsEnabled"] as? Boolean
-        if(bannerEnabled != null)
-            bannerInstructionsEnabled = bannerEnabled
-
-        val longPress = arguments["longPressDestinationEnabled"] as? Boolean
-        if(longPress != null)
-            longPressDestinationEnabled = longPress
-
-        val poiPoints = arguments["poi"] as? HashMap<*, *>
-
-        if(poiPoints != null)
-            addPOIAnnotations(poiPoints)
-
-        var avoids = arguments["avoid"] as? List<String>
-
-        if(avoids != null && avoids.isNotEmpty())
-            excludeList = avoids
     }
 
     open fun registerObservers() {
@@ -689,7 +543,6 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         mapboxNavigation.registerRouteProgressObserver(routeProgressObserver)
         mapboxNavigation.registerLocationObserver(locationObserver)
         mapboxNavigation.registerVoiceInstructionsObserver(voiceInstructionsObserver)
-        mapboxNavigation.registerRouteProgressObserver(replayProgressObserver)
         mapboxNavigation.registerRouteAlternativesObserver(alternativesObserver)
     }
 
@@ -699,13 +552,11 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         mapboxNavigation.unregisterRouteProgressObserver(routeProgressObserver)
         mapboxNavigation.unregisterLocationObserver(locationObserver)
         mapboxNavigation.unregisterVoiceInstructionsObserver(voiceInstructionsObserver)
-        mapboxNavigation.unregisterRouteProgressObserver(replayProgressObserver)
         mapboxNavigation.unregisterRouteAlternativesObserver(alternativesObserver)
     }
 
     fun onDestroy() {
         MapboxNavigationProvider.destroy()
-        mapboxReplayer.finish()
         maneuverApi.cancel()
         routeLineApi.cancel()
         routeLineView.cancel()
@@ -715,85 +566,46 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
 
     //Flutter stream listener delegate methods
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        FlutterMapboxPlugin.eventSink = events
+        eventSink = events;
     }
 
     override fun onCancel(arguments: Any?) {
-        FlutterMapboxPlugin.eventSink = null
+        eventSink = null;
     }
 
-    val context: Context = ctx
-    val activity: Activity = act
-    val token: String = accessToken
+    companion object {
+        var eventSink: EventChannel.EventSink? = null
+
+        const val PITCH_AMPLIFIER = -90
+        const val BEARING_AMPLIFIER = 90
+        const val ANIMATION_DURATION = 1500L
+    }
+
+    private val context: Context = ctx
+    private val activity: Activity = act
+
     open var methodChannel: MethodChannel? = null
     open var eventChannel: EventChannel? = null
 
-    //Config
-    var initialLatitude: Double? = null
-    var initialLongitude: Double? = null
+    private val token: String = accessToken
+    private var currentRoute: NavigationRoute? = null
 
-    val wayPoints: MutableList<Point> = mutableListOf()
-    val pois: MutableList<PointAnnotation> = mutableListOf()
-    var navigationMode =  DirectionsCriteria.PROFILE_DRIVING
-    var simulateRoute = false
-    var mapStyleUrlDay: String? = null
-    var mapStyleUrlNight: String? = null
-    var navigationLanguage = "en"
-    var navigationVoiceUnits = DirectionsCriteria.METRIC
-    var zoom = 14.0
-    var bearing = 0.0
-    var tilt = 0.0
-    var distanceRemaining: Double? = null
-    var durationRemaining: Double? = null
+    lateinit var settings : MapBoxSettings
 
-    var alternatives = true
+    private var distanceRemaining: Double? = null
+    private var durationRemaining: Double? = null
 
-    var allowsUTurnAtWayPoints = false
-    var enableRefresh = false
-    var voiceInstructionsEnabled = true
-    var bannerInstructionsEnabled = true
-    var longPressDestinationEnabled = true
-    var animateBuildRoute = true
-    var isOptimized = false
-    var maxHeight: Double? = null
-    var maxWeight: Double? = null
-    var maxWidth: Double? = null
-    var excludeList: List<String> = listOf()
-
-    var originPoint: Point? = null
-    var destinationPoint: Point? = null
-
-//    private var currentRoute: NavigationRoute? = null
-    private var isDisposed = false
-    private var isRefreshing = false
     private var isBuildingRoute = false
     private var isNavigationInProgress = false
     private var isNavigationCanceled = false
 
-    val BUTTON_ANIMATION_DURATION = 1500L
+    private val routeClickPadding = 30 * Resources.getSystem().displayMetrics.density
 
-    val routeClickPadding = 30 * Resources.getSystem().displayMetrics.density
-
-    /**
-     * Debug tool used to play, pause and seek route progress events that can be used to produce mocked location updates along the route.
-     */
-    private val mapboxReplayer = MapboxReplayer()
-
-    /**
-     * Debug tool that mocks location updates with an input from the [mapboxReplayer].
-     */
-    private val replayLocationEngine = ReplayLocationEngine(mapboxReplayer)
-
-    /**
-     * Debug observer that makes sure the replayer has always an up-to-date information to generate mock updates.
-     */
-    private val replayProgressObserver = ReplayProgressObserver(mapboxReplayer)
 
     /**
      * Bindings to the example layout.
      */
     open val binding: MapActivityBinding = bind
-
 
     /**
      * MapView entry point obtained from the embedded view.
@@ -862,10 +674,7 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         )
     }
 
-    private var listOfPoints: MutableList<PointAnnotationOptions> = mutableListOf()
-
     private lateinit var selectedAnnotation: String
-
     private lateinit var pointAnnotationManager: PointAnnotationManager
 
     /**
@@ -906,10 +715,10 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         set(value) {
             field = value
             if (value) {
-                binding.soundButton.muteAndExtend(BUTTON_ANIMATION_DURATION)
+                binding.soundButton.muteAndExtend(Companion.ANIMATION_DURATION)
                 voiceInstructionsPlayer.volume(SpeechVolume(0f))
             } else {
-                binding.soundButton.unmuteAndExtend(BUTTON_ANIMATION_DURATION)
+                binding.soundButton.unmuteAndExtend(Companion.ANIMATION_DURATION)
                 voiceInstructionsPlayer.volume(SpeechVolume(1f))
             }
         }
@@ -1015,28 +824,12 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         viewportDataSource.onRouteProgressChanged(routeProgress)
         viewportDataSource.evaluate()
 
-       // draw the upcoming maneuver arrow on the map
+        // draw the upcoming maneuver arrow on the map
         val style = mapboxMap.getStyle()
         if (style != null) {
             val maneuverArrowResult = routeArrowApi.addUpcomingManeuverArrow(routeProgress)
             routeArrowView.renderManeuverUpdate(style, maneuverArrowResult)
         }
-
-        // update top banner with maneuver instructions
-        val maneuvers = maneuverApi.getManeuvers(routeProgress)
-        maneuvers.fold(
-            { error ->
-                Toast.makeText(
-                    context,
-                    error.errorMessage,
-                    Toast.LENGTH_SHORT
-                ).show()
-            },
-            {
-                binding.maneuverView.visibility = View.VISIBLE
-                binding.maneuverView.renderManeuvers(maneuvers)
-            }
-        )
 
         // update bottom trip progress summary
         binding.tripProgressView.render(
@@ -1046,7 +839,6 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         //update flutter events
         if (!isNavigationCanceled) {
             try {
-
                 distanceRemaining = routeProgress.distanceRemaining.toDouble()
                 durationRemaining = routeProgress.durationRemaining
 
@@ -1147,9 +939,9 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
                     .also { list ->
                         list.add(0, routeFound)
                     }
-                FlutterMapboxPlugin.currentRoute = routeFound
-                durationRemaining = FlutterMapboxPlugin.currentRoute!!.directionsRoute.duration()
-                distanceRemaining = FlutterMapboxPlugin.currentRoute!!.directionsRoute.distance()
+                currentRoute = routeFound
+                durationRemaining = currentRoute!!.directionsRoute.duration()
+                distanceRemaining = currentRoute!!.directionsRoute.distance()
 
                 mapboxNavigation.setNavigationRoutes(reOrderedRoutes)
                 PluginUtilities.sendEvent(MapBoxEvents.ROUTE_BUILT)
@@ -1158,14 +950,6 @@ open class EmbeddedNavigationView(ctx: Context, act: Activity, bind: MapActivity
         false
     }
 
-//    private val onCameraChangeListener = OnCameraChangeListener {
-//        if(mapboxMap.cameraState.zoom < 7) {
-//            pointAnnotationManager.deleteAll()
-//        } else if (mapboxMap.cameraState.zoom > 7) {
-//            pointAnnotationManager.create(listOfPoints)
-//        }
-//        false
-//    }
 
     private val onPointAnnotationClickListener = OnPointAnnotationClickListener { annotation ->
         selectedAnnotation = annotation.textField!!

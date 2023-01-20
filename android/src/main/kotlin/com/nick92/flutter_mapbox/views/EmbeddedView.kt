@@ -27,7 +27,7 @@ class EmbeddedView(context: Context, activity: Activity, binding: MapActivityBin
     private var mapView = MapView(context, options)
 
     init {
-        val arguments = args as Map<*, *>
+        val arguments = args as Map<String, *>
         initFlutterChannelHandlers()
         initNavigation(mapView, arguments)
     }

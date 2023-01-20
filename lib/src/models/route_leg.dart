@@ -1,5 +1,5 @@
-import 'wayPoint.dart';
-import 'routeStep.dart';
+import 'way_point.dart';
+import 'route_step.dart';
 import '../helpers.dart';
 
 ///A RouteLeg object defines a single leg of a route between two waypoints.
@@ -15,8 +15,15 @@ class RouteLeg {
   WayPoint? destination;
   List<RouteStep>? steps;
 
-  RouteLeg(this.profileIdentifier, this.name, this.distance,
-      this.expectedTravelTime, this.source, this.destination, this.steps);
+  RouteLeg({
+    required this.profileIdentifier,
+    required this.name,
+    required this.distance,
+    required this.expectedTravelTime,
+    required this.source,
+    required this.destination,
+    required this.steps,
+  });
 
   RouteLeg.fromJson(Map<String, dynamic> json) {
     profileIdentifier = json["profileIdentifier"];

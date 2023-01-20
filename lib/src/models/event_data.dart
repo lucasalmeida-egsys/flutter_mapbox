@@ -1,5 +1,4 @@
-
-///Data associated with a Route Event
+//Data associated with a Route Event
 class MapBoxEventData {
   String? data;
 
@@ -10,7 +9,7 @@ class MapBoxEventData {
   }
 
   Map<String, dynamic> toJson() {
-    final Map<String, dynamic> data = new Map<String, dynamic>();
+    final Map<String, dynamic> data = <String, dynamic>{};
     data['data'] = this.data;
     return data;
   }

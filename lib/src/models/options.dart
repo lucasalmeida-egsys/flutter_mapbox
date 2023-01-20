@@ -1,8 +1,4 @@
-import 'package:flutter/widgets.dart';
 import 'package:flutter_mapbox/flutter_mapbox.dart';
-
-import 'navmode.dart';
-import 'voiceUnits.dart';
 
 /// Configuration options for the MapBoxNavigation.
 ///
@@ -10,12 +6,6 @@ import 'voiceUnits.dart';
 /// "do not change this configuration option".
 ///
 class MapBoxOptions {
-  /// The initial Latitude of the Map View
-  final double? initialLatitude;
-
-  /// The initial Longitude of the Map View
-  final double? initialLongitude;
-
   /// 2-letter ISO 639-1 code for language. This property affects the sentence contained within the RouteStep.instructions property, but it does not affect any road names contained in that property or other properties such as RouteStep.name. Defaults to "en" if an unsupported language is specified. The languages in this link are supported: https://docs.mapbox.com/android/navigation/overview/localization/ or https://docs.mapbox.com/ios/api/navigation/0.14.1/localization-and-internationalization.html
   final String? language;
 
@@ -38,153 +28,67 @@ class MapBoxOptions {
 
   ///
   /// The navigation mode desired. Defaults to drivingWithTraffic
-  final MapBoxNavigationMode? mode;
+  final MapNavigationMode? mode;
 
   /// The unit of measure said in voice instructions
-  final VoiceUnits? units;
+  final MapVoiceUnits? units;
 
+  ///The max vehicle height in meters. If this parameter is provided, the Directions API will compute a route that includes only roads with a height limit greater than or equal to the max vehicle height. The default value is 1.6 meters.
   String? maxHeight;
+
+  /// The max vehicle weight, in metric tons (1000 kg). If this parameter is provided, the Directions API will compute a route that includes only roads with a weight limit greater than or equal to the max vehicle weight. max_weight must be between 0 and 100 metric tons.
+  ///The default value is 2.5 metric tons.
   String? maxWeight;
+
+  //The max vehicle width in meters. If this parameter is provided, the Directions API will compute a route that includes only roads with a width limit greater than or equal to the max vehicle width. The default value is 1.9 meters.
   String? maxWidth;
-  List<WayPoint>? pois;
 
   /// If the value of this property is true, a returned route may require an immediate U-turn at an intermediate waypoint. At an intermediate waypoint, if the value of this property is false, each returned route may continue straight ahead or turn to either side but may not U-turn. This property has no effect if only two waypoints are specified.
   /// same as 'not continueStraight' on Android
   final bool? allowsUTurnAtWayPoints;
 
-  final bool? enableRefresh;
-  // if true voice instruction is enabled
-  final bool? voiceInstructionsEnabled;
-  //if true, banner instruction is shown and returned
-  final bool? bannerInstructionsEnabled;
-
-  /// if true will simulate the route as if you were driving. Always true on iOS Simulator
-  final bool? simulateRoute;
-
-  /// The Url of the style the Navigation MapView should use during the day
-  final String? mapStyleUrlDay;
-
-  /// The Url of the style the Navigation MapView should use at night
-  final String? mapStyleUrlNight;
-
-  /// if true, will reorder the routes to optimize navigation for time and shortest distance using the Travelling Salesman Algorithm. Always false for now
-  final bool? isOptimized;
-
-  /// Padding applied to the MapView when embedded
-  final EdgeInsets? padding;
-
-  /// Should animate the building of the Route. Default is True
-  final bool? animateBuildRoute;
+  /// The Url of the style the Navigation MapView
+  final String? mapStyleUrl;
 
   /// When the user long presses on a point on the map, set that as the destination
   final bool? longPressDestinationEnabled;
 
-  /// Free-drive mode is a unique Mapbox Navigation SDK feature that allows drivers to navigate without a set destination. This mode is sometimes referred to as passive navigation.
-  /// No destination is required when set to true.
-  final bool? enableFreeDriveMode;
-
   final List<String>? avoid;
 
-  MapBoxOptions(
-      {this.initialLatitude,
-      this.initialLongitude,
-      this.language,
-      this.zoom,
-      this.bearing,
-      this.tilt,
-      this.alternatives,
-      this.mode,
-      this.units,
-      this.allowsUTurnAtWayPoints,
-      this.enableRefresh,
-      this.voiceInstructionsEnabled,
-      this.bannerInstructionsEnabled,
-      this.longPressDestinationEnabled,
-      this.simulateRoute,
-      this.isOptimized,
-      this.maxHeight,
-      this.maxWidth,
-      this.maxWeight,
-      this.mapStyleUrlDay,
-      this.mapStyleUrlNight,
-      this.enableFreeDriveMode,
-      this.padding,
-      this.pois,
-      this.avoid,
-      this.animateBuildRoute});
+  MapBoxOptions({
+    required this.language,
+    required this.zoom,
+    required this.bearing,
+    required this.tilt,
+    required this.alternatives,
+    required this.mode,
+    required this.units,
+    required this.allowsUTurnAtWayPoints,
+    required this.longPressDestinationEnabled,
+    this.maxHeight,
+    this.maxWidth,
+    this.maxWeight,
+    this.mapStyleUrl,
+    this.avoid,
+  });
 
   Map<String, dynamic> toMap() {
-    final Map<String, dynamic> optionsMap = new Map<String, dynamic>();
-    void addIfNonNull(String fieldName, dynamic value) {
-      if (value != null) {
-        optionsMap[fieldName] = value;
-      }
-    }
+    final Map<String, dynamic> optionsMap = {};
 
-    if (pois != null && pois!.isNotEmpty) {
-      List<Map<String, Object?>> poiList = [];
-
-      for (var poi in pois!) {
-        assert(poi.name != null);
-        assert(poi.latitude != null);
-        assert(poi.longitude != null);
-
-        final pointMap = <String, dynamic>{
-          "Name": poi.name,
-          "Latitude": poi.latitude,
-          "Longitude": poi.longitude,
-        };
-        poiList.add(pointMap);
-      }
-      var i = 0;
-      var wayPointMap =
-          Map.fromIterable(poiList, key: (e) => i++, value: (e) => e);
-
-      optionsMap['poi'] = wayPointMap;
-    }
-
-    addIfNonNull("initialLatitude", initialLatitude);
-    addIfNonNull("initialLongitude", initialLongitude);
-    addIfNonNull("language", language);
-    addIfNonNull("animateBuildRoute", animateBuildRoute);
-    addIfNonNull("longPressDestinationEnabled", longPressDestinationEnabled);
-
-    if (this.zoom != null) optionsMap['zoom'] = this.zoom;
-    if (this.bearing != null) optionsMap['bearing'] = this.bearing;
-    if (this.tilt != null) optionsMap['tilt'] = this.tilt;
-    if (this.alternatives != null)
-      optionsMap['alternatives'] = this.alternatives;
-    if (this.mode != null)
-      optionsMap['mode'] = this.mode?.toString().split('.').last;
-    if (this.units != null)
-      optionsMap['units'] = this.units?.toString().split('.').last;
-    if (this.allowsUTurnAtWayPoints != null)
-      optionsMap['allowsUTurnAtWayPoints'] = this.allowsUTurnAtWayPoints;
-    if (this.enableRefresh != null)
-      optionsMap['enableRefresh'] = this.enableRefresh;
-    if (this.avoid != null) optionsMap['avoid'] = this.avoid;
-
-    addIfNonNull("voiceInstructionsEnabled", voiceInstructionsEnabled);
-    addIfNonNull("bannerInstructionsEnabled", bannerInstructionsEnabled);
-
-    if (this.mapStyleUrlDay != null)
-      optionsMap['mapStyleUrlDay'] = this.mapStyleUrlDay;
-    if (this.mapStyleUrlNight != null)
-      optionsMap['mapStyleUrlNight'] = this.mapStyleUrlNight;
-    if (this.simulateRoute != null)
-      optionsMap['simulateRoute'] = this.simulateRoute;
-    if (this.isOptimized != null) optionsMap['isOptimized'] = this.isOptimized;
-
-    if (maxHeight != null) optionsMap['maxHeight'] = maxHeight;
-    if (maxWeight != null) optionsMap['maxWeight'] = maxWeight;
-    if (maxWidth != null) optionsMap['maxWidth'] = maxWidth;
-
-    addIfNonNull('padding', <double?>[
-      padding?.top,
-      padding?.left,
-      padding?.bottom,
-      padding?.right,
-    ]);
+    optionsMap['language'] = language;
+    optionsMap['longPressDestinationEnabled'] = longPressDestinationEnabled;
+    optionsMap['zoom'] = zoom;
+    optionsMap['bearing'] = bearing;
+    optionsMap['tilt'] = tilt;
+    optionsMap['alternatives'] = alternatives;
+    optionsMap['mode'] = mode?.name;
+    optionsMap['units'] = units?.name;
+    optionsMap['allowsUTurnAtWayPoints'] = allowsUTurnAtWayPoints;
+    optionsMap['avoid'] = avoid ?? [];
+    optionsMap['mapStyleUrl'] = mapStyleUrl;
+    optionsMap['maxHeight'] = maxHeight;
+    optionsMap['maxWeight'] = maxWeight;
+    optionsMap['maxWidth'] = maxWidth;
 
     return optionsMap;
   }
@@ -194,6 +98,7 @@ class MapBoxOptions {
 
     return newOptions.toMap()
       ..removeWhere(
-          (String key, dynamic value) => prevOptionsMap[key] == value);
+        (String key, dynamic value) => prevOptionsMap[key] == value,
+      );
   }
 }
