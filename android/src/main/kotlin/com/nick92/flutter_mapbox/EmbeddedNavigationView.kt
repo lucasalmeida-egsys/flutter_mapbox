@@ -253,7 +253,7 @@ open class EmbeddedNavigationView(
         mapView.gestures.addOnMapClickListener(mapClickListener)
 
         val annotationApi = mapView?.annotations
-        pointAnnotationManager = annotationApi.createPointAnnotationManager()
+        pointAnnotationManager = annotationApi!!.createPointAnnotationManager()
         pointAnnotationManager.addClickListener(onPointAnnotationClickListener)
 
         // initialize navigation trip observers
